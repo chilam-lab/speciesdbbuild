@@ -6,6 +6,13 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+.DS_store
+dbbuild/data
+dbbuild/.env
+middleware_speciesv3/nodemodules
+middleware_speciesv3/.env
+.env
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
