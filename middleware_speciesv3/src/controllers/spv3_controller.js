@@ -245,6 +245,8 @@ exports.get_variable_byid = function(req, res) {
 
 			).then(resp => {
 
+				debug(resp)
+
 				res.status(200).json({
 					data: resp
 				})
