@@ -1,4 +1,4 @@
-var debug = require('debug')('verbs:auth')
+var debug = require('debug')('verbs:controllers')
 var verb_utils = require('./verb_utils')
 var pgp = require('pg-promise')()
 var config = require('../../config')
@@ -39,7 +39,7 @@ dic_taxon_db.set('reino','reinovalido')
 
 exports.variables = function(req, res) {
 
-	let { } = req.body;
+	// let { } = req.body;
 
 	// Se recomienda agregar la columna available_grids a este catalogo con ayuda de los servicios disponibles del proyecto regionmiddleware
 	pool.any(`SELECT id, taxon as variable, level_size, filter_fields, available_grids
@@ -66,7 +66,7 @@ exports.secuencia = function(req, res) {
 		variableLevel,
 		variableValue,
 		nextVariableLevel
-	} = req.body;
+	} = req.body || {};
 
 	console.log("variableLevel: " + dic_taxon_db.get(variableLevel))
 	console.log("variableValue: " + variableValue)
