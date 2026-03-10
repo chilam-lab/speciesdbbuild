@@ -4,7 +4,7 @@
   "description": "Middleware para consumir el proyecto de regiones y mallas",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --max-old-space-size=5000 src/server.js",
+    "start": "DEBUG=express:router,verbs:*,snib-middleware:* node --max-old-space-size=5000 src/server.js",
     "dev": "DEBUG=express:router,verbs:*,snib-middleware:* nodemon --max-old-space-size=5000 src/server.js",
     "lint": "eslint ."
   },
