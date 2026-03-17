@@ -7,12 +7,11 @@ var bodyParser = require('body-parser')
 var config = require('../config')
 var zlib = require('zlib')
 var compression = require('compression')
-var pg = require('pg')
 var session = require('express-session')
 var pgSession = require('connect-pg-simple')(session);
 process.env.TZ = "America/Mexico_City";
 var verb_utils = require('./controllers/verb_utils')
-var pool = verb_utils.pool 
+var db = verb_utils.pool 
 
 // var port = config.port   // set our port
 var port = config.port || 8080;
@@ -33,7 +32,7 @@ app.use(bodyParser.urlencoded({limit: '512mb', extended: true, parameterLimit: 1
 
 app.use(session({
     store: new pgSession({
-        pool: pool,
+        pgPromise: db,
         tableName : 'session' 
     }),
     secret: "species_key",
@@ -55,6 +54,5 @@ var server = app.listen(port, function () {
 
 server.setTimeout(60 * 1000 * 15)
 module.exports = server
-
 
 
