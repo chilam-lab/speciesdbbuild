@@ -1,12 +1,4 @@
-DROP TABLE IF EXISTS informaciongeoportal;
-
--- Converted by db_converter
--- START TRANSACTION;
--- SET standard_conforming_strings=off;
--- SET escape_string_warning=off;
--- SET CONSTRAINTS ALL DEFERRED;
-
-CREATE TABLE informaciongeoportal (
+CREATE TABLE IF NOT EXISTS informaciongeoportal (
     "paisoriginal" varchar(100) DEFAULT NULL,
     "estadooriginal" varchar(100) DEFAULT NULL,
     "municipiooriginal" varchar(100) DEFAULT NULL,
@@ -26,7 +18,7 @@ CREATE TABLE informaciongeoportal (
     "latitud" double precision DEFAULT NULL,
     "estadomapa" varchar(300) DEFAULT NULL,
     "municipiomapa" varchar(160) DEFAULT NULL,
-    "localidad" varchar(1024) DEFAULT NULL,
+    "localidad" text,
     "fechacolecta" varchar(20) DEFAULT NULL,
     "anp" varchar(500) DEFAULT NULL,
     "probablelocnodecampo" varchar(4) DEFAULT NULL,
@@ -52,7 +44,7 @@ CREATE TABLE informaciongeoportal (
     "categoriainfraespecie2" varchar(40) DEFAULT NULL,
     "autor" varchar(400) DEFAULT NULL,
     "estatustax" varchar(40) DEFAULT NULL,
-    "reftax" varchar(1024) DEFAULT NULL,
+    "reftax" text,
     "taxonvalidado" varchar(4) DEFAULT NULL,
     "reinovalido" varchar(300) DEFAULT NULL,
     "phylumdivisionvalido" varchar(300) DEFAULT NULL,
@@ -61,7 +53,7 @@ CREATE TABLE informaciongeoportal (
     "categoriainfraespecievalida" varchar(40) DEFAULT NULL,
     "categoriainfraespecie2valida" varchar(40) DEFAULT NULL,
     "autorvalido" varchar(400) DEFAULT NULL,
-    "reftaxvalido" varchar(1024) DEFAULT NULL,
+    "reftaxvalido" text,
     "nombrecomun" text ,
     "ambiente" text,
     "validacionambiente" varchar(150),
@@ -85,17 +77,17 @@ CREATE TABLE informaciongeoportal (
     "usvserieIV" varchar(200) DEFAULT NULL,
     "usvserieV" varchar(200) DEFAULT NULL,
     "coleccion" varchar(300) DEFAULT NULL,
-    "institucion" varchar(1024) DEFAULT NULL,
+    "institucion" text,
     "paiscoleccion" varchar(300) DEFAULT NULL,
     "numcatalogo" varchar(200) DEFAULT NULL,
     "numcolecta" varchar(200) DEFAULT NULL,
     "procedenciaejemplar" varchar(40) DEFAULT NULL,
-    "determinador" varchar(1024) DEFAULT NULL,
+    "determinador" text,
     "fechadeterminacion" varchar(20) DEFAULT NULL,
     "diadeterminacion" int4 DEFAULT NULL,
     "mesdeterminacion" int4 DEFAULT NULL,
     "aniodeterminacion" int2 DEFAULT NULL,
-    "colector" varchar(1024) DEFAULT NULL,
+    "colector" text,
     "diacolecta" int4 NULL DEFAULT 99,
     "mescolecta" int4 NULL DEFAULT 99,
     "aniocolecta" int4 NULL DEFAULT 9999,
@@ -104,9 +96,9 @@ CREATE TABLE informaciongeoportal (
     "proyecto" varchar(300) NOT NULL DEFAULT '',
     "formadecitar" text ,
     "licenciauso" varchar(255),
-    "urlproyecto" varchar(1024) DEFAULT NULL,
+    "urlproyecto" text,
     "urlorigen" varchar(255),
-    "obsusoinfo" varchar(1024) DEFAULT NULL,
+    "obsusoinfo" text,
     "version" varchar(20) DEFAULT NULL,
     "idestadomapa" int4  DEFAULT NULL,
     "idmunicipiomapa" int2  DEFAULT NULL,
@@ -115,8 +107,8 @@ CREATE TABLE informaciongeoportal (
     "idanpfederal1" integer  DEFAULT NULL,
     "idanpfederal2" integer  DEFAULT NULL,
     "especievalidabusqueda" varchar(200) DEFAULT NULL,
-    "comentarioscat" varchar(1024) DEFAULT NULL,
-    "comentarioscatvalido" varchar(1024) DEFAULT NULL,
+    "comentarioscat" text,
+    "comentarioscatvalido" text,
     "homonimosgenero" text ,
     "homonimosespecie" text ,
     "homonimosinfraespecie" text ,

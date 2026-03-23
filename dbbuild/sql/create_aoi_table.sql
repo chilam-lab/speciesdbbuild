@@ -1,6 +1,4 @@
-DROP TABLE IF EXISTS aoi;
-
-CREATE TABLE aoi (
+CREATE TABLE IF NOT EXISTS aoi (
 	aoi_id serial4 NOT NULL,
 	fgid int4 NULL,
 	cve_iso varchar(3) NULL,

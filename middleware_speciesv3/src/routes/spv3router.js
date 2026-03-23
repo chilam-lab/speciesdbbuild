@@ -54,4 +54,8 @@ router.route('/get-data/:id')
   .get(regionCtrl.get_data_byid)
   .post(regionCtrl.get_data_byid)
 
+router.route('/info')
+  .get(regionCtrl.get_sourceinfo)
+  .post(regionCtrl.get_sourceinfo)
+
 module.exports = router;
