@@ -95,39 +95,39 @@ exports.secuencia = function(req, res) {
    	});
 }
 
-// exports.get_sourceinfo = function(req, res) {
-//   pool.oneOrNone(`
-//       SELECT 
-//         name,
-//         description,
-//         source_url,
-//         download_url,
-//         dict_url
-//       FROM data_source_info
-//       ORDER BY updated_at DESC, id DESC
-//       LIMIT 1;
-//     `, {})
-//     .then(function(data) {
-//       if (!data) {
-//         res.status(404).json({
-//           message: "No se encontró información de la fuente de datos"
-//         })
-//         return
-//       }
+exports.get_sourceinfo = function(req, res) {
+  pool.oneOrNone(`
+      SELECT 
+        name,
+        description,
+        source_url,
+        download_url,
+        dict_url
+      FROM data_source_info
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1;
+    `, {})
+    .then(function(data) {
+      if (!data) {
+        res.status(404).json({
+          message: "No se encontró información de la fuente de datos"
+        })
+        return
+      }
 
-//       res.status(200).json({
-//         data: data
-//       })
-//     })
-//     .catch(error => {
-//       debug(error)
-//       res.status(403).json({
-//         message: "error al obtener información de la fuente de datos",
-//         error: error
-//       })
-//     });
+      res.status(200).json({
+        data: data
+      })
+    })
+    .catch(error => {
+      debug(error)
+      res.status(403).json({
+        message: "error al obtener información de la fuente de datos",
+        error: error
+      })
+    });
 
-// }
+}
 
 
 
