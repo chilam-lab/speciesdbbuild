@@ -1,26 +1,64 @@
-DROP TABLE IF EXISTS sp_snib;
+CREATE TABLE IF NOT EXISTS sp_snib (
+    spid bigserial PRIMARY KEY,
+    reinovalido text,
+    phylumdivisionvalido text,
+    clasevalida text,
+    ordenvalido text,
+    familiavalida text,
+    generovalido text,
+    especievalidabusqueda text,
+    validadoterceros smallint,
+    especieepiteto text,
+    subgenero text,
+    nombreinfra text,
+    idcat text,
+    idbacktax integer,
+    idnombrecatvalido text
+);
 
-CREATE TABLE sp_snib AS SELECT distinct reinovalido,phylumdivisionvalido,clasevalida,ordenvalido,familiavalida,generovalido,especievalidabusqueda FROM snib;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_sp_snib_tax'
+    ) THEN
+        ALTER TABLE sp_snib
+        ADD CONSTRAINT uq_sp_snib_tax UNIQUE (
+            reinovalido, phylumdivisionvalido, clasevalida, ordenvalido,
+            familiavalida, generovalido, especievalidabusqueda
+        );
+    END IF;
+END$$;
 
-ALTER TABLE sp_snib ADD COLUMN spid serial;
-ALTER TABLE sp_snib ADD COLUMN validadoterceros smallint;
-ALTER TABLE sp_snib ADD COLUMN especieepiteto varchar(100);
-ALTER TABLE sp_snib ADD COLUMN subgenero varchar(100);
-ALTER TABLE sp_snib ADD COLUMN nombreinfra varchar(100);
-ALTER TABLE sp_snib ADD COLUMN idcat varchar(100);
-ALTER TABLE sp_snib ADD COLUMN idbacktax integer;
-ALTER TABLE sp_snib ADD COLUMN idnombrecatvalido varchar(100);
+INSERT INTO sp_snib (
+    reinovalido, phylumdivisionvalido, clasevalida, ordenvalido,
+    familiavalida, generovalido, especievalidabusqueda
+)
+SELECT DISTINCT
+    COALESCE(reinovalido,''),
+    COALESCE(phylumdivisionvalido,''),
+    COALESCE(clasevalida,''),
+    COALESCE(ordenvalido,''),
+    COALESCE(familiavalida,''),
+    COALESCE(generovalido,''),
+    COALESCE(especievalidabusqueda,'')
+FROM snib
+ON CONFLICT ON CONSTRAINT uq_sp_snib_tax DO NOTHING;
 
-UPDATE sp_snib SET validadoterceros = 1;
-UPDATE sp_snib SET especieepiteto = CASE WHEN left(split_part(especievalidabusqueda, ' ', 2), 1) = '(' THEN split_part(especievalidabusqueda, ' ', 3) ELSE split_part(especievalidabusqueda, ' ', 2) END, subgenero = CASE WHEN left(split_part(especievalidabusqueda, ' ', 2), 1) = '(' THEN rtrim(ltrim(split_part(especievalidabusqueda, ' ', 2), '('), ')') ELSE '' END, nombreinfra = CASE WHEN split_part(especievalidabusqueda, ' ', 3) <> '' AND left(split_part(especievalidabusqueda, ' ', 2), 1) <> '(' THEN split_part(especievalidabusqueda, ' ', 3) WHEN split_part(especievalidabusqueda, ' ', 4) <> '' AND left(split_part(especievalidabusqueda, ' ', 2), 1) = '(' THEN split_part(especievalidabusqueda, ' ', 4) ELSE '' END;
+UPDATE sp_snib SET validadoterceros = 1 WHERE validadoterceros IS NULL;
 
-CREATE INDEX idx_sp_snib_spid ON sp_snib(spid);
-CREATE INDEX idx_sp_snib_especieepiteto ON sp_snib(especieepiteto);
-CREATE INDEX idx_sp_snib_subgenero ON sp_snib(subgenero);
-CREATE INDEX idx_sp_snib_nombreinfra ON sp_snib(nombreinfra);
-CREATE INDEX idx_sp_snib_idcat ON sp_snib(idcat);
-CREATE INDEX idx_sp_snib_idbacktax ON sp_snib(idbacktax);
-CREATE INDEX idx_sp_snib_idnombrecatvalido ON sp_snib(idnombrecatvalido);
+UPDATE sp_snib
+SET
+  especieepiteto = CASE WHEN left(split_part(especievalidabusqueda,' ',2),1)='('
+      THEN split_part(especievalidabusqueda,' ',3) ELSE split_part(especievalidabusqueda,' ',2) END,
+  subgenero = CASE WHEN left(split_part(especievalidabusqueda,' ',2),1)='('
+      THEN rtrim(ltrim(split_part(especievalidabusqueda,' ',2),'('),')') ELSE '' END,
+  nombreinfra = CASE
+      WHEN split_part(especievalidabusqueda,' ',3)<>'' AND left(split_part(especievalidabusqueda,' ',2),1)<>'('
+          THEN split_part(especievalidabusqueda,' ',3)
+      WHEN split_part(especievalidabusqueda,' ',4)<>'' AND left(split_part(especievalidabusqueda,' ',2),1)='('
+          THEN split_part(especievalidabusqueda,' ',4)
+      ELSE '' END
+WHERE especieepiteto IS NULL OR subgenero IS NULL OR nombreinfra IS NULL;
 
-UPDATE snib t0 SET spid = t1.spid FROM sp_snib AS t1 WHERE t0.reinovalido = t1.reinovalido AND t0.phylumdivisionvalido = t1.phylumdivisionvalido AND t0.clasevalida = t1.clasevalida AND t0.ordenvalido = t1.ordenvalido AND t0.familiavalida = t1.familiavalida AND t0.generovalido = t1.generovalido AND t0.especievalidabusqueda = t1.especievalidabusqueda AND t0.spid IS NULL;
-UPDATE sp_snib SET idcat = CASE WHEN not ss.idnombrecatvalido IS NULL AND ss.idnombrecatvalido <> '' THEN ss.idnombrecatvalido WHEN not ss.idnombrecat IS NULL AND ss.idnombrecat <> '' THEN ss.idnombrecat ELSE '' END FROM ( SELECT DISTINCT spid, idnombrecat, idnombrecatvalido FROM snib WHERE (idnombrecatvalido is not null and idnombrecatvalido <> '') or (idnombrecat is not null and idnombrecat <> '') ) AS ss WHERE sp_snib.spid = ss.spid; 
+CREATE INDEX IF NOT EXISTS idx_sp_snib_spid ON sp_snib(spid);
+CREATE INDEX IF NOT EXISTS idx_sp_snib_idcat ON sp_snib(idcat);
