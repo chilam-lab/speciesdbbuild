@@ -239,25 +239,25 @@ except Exception as e:
 
 
 
-# Construyendo variables bioticas
-conn = None
-cur = None
-try:
-    conn = psycopg2.connect(
-        'dbname={0} host={1} port={2} user={3} password={4}'.format(
-            DBNICHENAME, DBNICHEHOST, DBNICHEPORT, DBNICHEUSER, DBNICHEPASSWD
-        )
-    )
-    conn.autocommit = False
-    cur = conn.cursor()
+# # Construyendo variables bioticas
+# conn = None
+# cur = None
+# try:
+#     conn = psycopg2.connect(
+#         'dbname={0} host={1} port={2} user={3} password={4}'.format(
+#             DBNICHENAME, DBNICHEHOST, DBNICHEPORT, DBNICHEUSER, DBNICHEPASSWD
+#         )
+#     )
+#     conn.autocommit = False
+#     cur = conn.cursor()
 
-    logger.info('Creación de tablas')
+#     logger.info('Creación de tablas')
 
-    create_snib_table_sql = get_sql(create_snib_table)
-    create_sp_snib_table_sql = get_sql(create_sp_snib_table)
+#     create_snib_table_sql = get_sql(create_snib_table)
+#     create_sp_snib_table_sql = get_sql(create_sp_snib_table)
     
-    update_snib_spid_batch_sql = get_sql('./sql/update_snib_spid_batch.sql')
-    post_snib_load_sql = get_sql('./sql/post_snib_load.sql')
+#     update_snib_spid_batch_sql = get_sql('./sql/update_snib_spid_batch.sql')
+#     post_snib_load_sql = get_sql('./sql/post_snib_load.sql')
 
     # descomentar si se ha borrado la tabla de snib
     # logger.info('Creando/ajustando estructura snib')
@@ -350,84 +350,83 @@ try:
     # """)
     # conn.commit()
 
-    logger.info('Iniciando spid snib batch')
-    batch_size_spid = int(os.getenv("SPID_BATCH_SIZE", "200000"))
-    batch_no = 0
+#     logger.info('Iniciando spid snib batch')
+#     batch_size_spid = int(os.getenv("SPID_BATCH_SIZE", "200000"))
+#     batch_no = 0
 
-    while True:
-        batch_no += 1
-        logger.info(f'Batch {batch_no}: ejecutando update de spid (size={batch_size_spid})')
+#     while True:
+#         batch_no += 1
+#         logger.info(f'Batch {batch_no}: ejecutando update de spid (size={batch_size_spid})')
 
-        cur.execute(update_snib_spid_batch_sql, (batch_size_spid,))
-        updated = cur.rowcount if cur.rowcount is not None else 0
-        conn.commit()
+#         cur.execute(update_snib_spid_batch_sql, (batch_size_spid,))
+#         updated = cur.rowcount if cur.rowcount is not None else 0
+#         conn.commit()
 
-        logger.info(f'Batch {batch_no}: updated={updated}')
+#         logger.info(f'Batch {batch_no}: updated={updated}')
 
-        if updated == 0:
-            logger.info('Sin filas actualizadas; finaliza proceso de asignación spid.')
-            break
+#         if updated == 0:
+#             logger.info('Sin filas actualizadas; finaliza proceso de asignación spid.')
+#             break
 
-        # Conteo exacto solo cada 25 lotes para no frenar rendimiento
-        if batch_no % 25 == 0:
-            cur.execute("SELECT count(*) FROM snib WHERE spid IS NULL;")
-            pending = cur.fetchone()[0]
-            logger.info(f'Batch {batch_no}: pendientes exactos de spid={pending}')
+#         # Conteo exacto solo cada 25 lotes para no frenar rendimiento
+#         if batch_no % 5000 == 0:
+#             cur.execute("SELECT count(*) FROM snib WHERE spid IS NULL;")
+#             pending = cur.fetchone()[0]
+#             logger.info(f'Batch {batch_no}: pendientes exactos de spid={pending}')
         
-    logger.info('Se crearon las variables bioticas correctamente')
-
-except Exception as err:
-    if conn:
-        conn.rollback()
-    logger.error('No se crearon correctamente las variables bioticas: {0}'.format(str(err)))
-    err_type, err_obj, traceback = sys.exc_info()
-    line_num = traceback.tb_lineno
-    print("\nERROR:", err, "on line number:", line_num)
-    print("traceback:", traceback, "-- type:", err_type)
-    sys.exit()
-finally:
-    if cur:
-        cur.close()
-    if conn:
-        conn.close()
-
-
-
-# # Construyendo tabla catalogo cat_taxon
-# try:
-#     conn = psycopg2.connect('dbname={0} host={1} port={2} user={3} password={4}'.format(DBNICHENAME, DBNICHEHOST, DBNICHEPORT, DBNICHEUSER, DBNICHEPASSWD))
-#     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-
-#     cur = conn.cursor()
-#     logger.info('Creación de tabla catalogo')
-
-    
-
-#     create_snib_table_sql = get_sql(create_snib_table)
-#     create_sp_snib_table_sql = get_sql(create_sp_snib_table)
-#     # create_geo_snib_table_sql = get_sql(create_geo_snib_table)
-
-#     logger.info('Creando tabla snib')
-#     cur.execute(create_snib_table_sql)
-
-#     logger.info('Creando tabla sp_snib')
-#     cur.execute(create_sp_snib_table_sql)
-
-#     # logger.info('Creando tabla geo_snib')
-#     # cur.execute(create_geo_snib_table_sql)
-
-#     cur.close()
-#     conn.close()
 #     logger.info('Se crearon las variables bioticas correctamente')
-            
+
 # except Exception as err:
-    
+#     if conn:
+#         conn.rollback()
 #     logger.error('No se crearon correctamente las variables bioticas: {0}'.format(str(err)))
 #     err_type, err_obj, traceback = sys.exc_info()
 #     line_num = traceback.tb_lineno
-#     print ("\nERROR:", err, "on line number:", line_num)
-#     print ("traceback:", traceback, "-- type:", err_type)
+#     print("\nERROR:", err, "on line number:", line_num)
+#     print("traceback:", traceback, "-- type:", err_type)
 #     sys.exit()
+# finally:
+#     if cur:
+#         cur.close()
+#     if conn:
+#         conn.close()
+
+
+
+# Construyendo tabla catalogo cat_taxon
+try:
+    conn = psycopg2.connect('dbname={0} host={1} port={2} user={3} password={4}'.format(DBNICHENAME, DBNICHEHOST, DBNICHEPORT, DBNICHEUSER, DBNICHEPASSWD))
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+
+    cur = conn.cursor()
+    logger.info('Creación de tabla catalogo')
+
+
+    create_snib_table_sql = get_sql(create_snib_table)
+    create_sp_snib_table_sql = get_sql(create_sp_snib_table)
+    # create_geo_snib_table_sql = get_sql(create_geo_snib_table)
+
+    logger.info('Creando tabla snib')
+    cur.execute(create_snib_table_sql)
+
+    logger.info('Creando tabla sp_snib')
+    cur.execute(create_sp_snib_table_sql)
+
+    # logger.info('Creando tabla geo_snib')
+    # cur.execute(create_geo_snib_table_sql)
+
+    cur.close()
+    conn.close()
+    logger.info('Se crearon las variables bioticas correctamente')
+            
+except Exception as err:
+    
+    logger.error('No se crearon correctamente las variables bioticas: {0}'.format(str(err)))
+    err_type, err_obj, traceback = sys.exc_info()
+    line_num = traceback.tb_lineno
+    print ("\nERROR:", err, "on line number:", line_num)
+    print ("traceback:", traceback, "-- type:", err_type)
+    sys.exit()
 
 
 
