@@ -184,18 +184,27 @@ exports.get_variable_byid = async function (req, res) {
 
         let query_temp = "( ";
         filter_values.forEach((value, index) => {
-          let sqlValue = value;
-          if (filter_param !== "levels_id") {
-            sqlValue = `'${value}%'`;
-          }
+          const col = dic_taxon_db.get(filter_param);
+          const op = index === 0 ? "" : "or ";
 
-          if (index === 0) {
-            query_temp += `lower(${dic_taxon_db.get(filter_param)}) like lower(${sqlValue}) `;
+          if (filter_param === "levels_id") {
+            const num = Number(value);
+            if (!Number.isInteger(num) || num <= 0) return; // ignora valores inválidos
+            query_temp += `${op}${col} = ${num} `;
           } else {
-            query_temp += `or lower(${dic_taxon_db.get(filter_param)}) like lower(${sqlValue}) `;
+            const safeValue = String(value).replace(/'/g, "''");
+
+            if (filter_param === "especie") {
+              // exacto para no incluir subespecies
+              query_temp += `${op}lower(${col}) = lower('${safeValue}') `;
+            } else {
+              // mantiene comportamiento actual por prefijo para otros taxones
+              query_temp += `${op}lower(${col}) like lower('${safeValue}%') `;
+            }
           }
         });
         query_temp += " )";
+
 
         query_array.push(query_temp);
       }
