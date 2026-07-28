@@ -320,6 +320,7 @@ exports.get_data_byid = async function (req, res) {
     //
     const SPID_BATCH        = 10;
     const WAVE_SIZE         = 10;
+    const MAX_PTS_PER_SPID  = 5000;
 
     let queryPts = `
       SELECT DISTINCT
@@ -392,7 +393,10 @@ exports.get_data_byid = async function (req, res) {
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
-      const pts = [...new Set(points_byspid.points)];
+      const uniquePts = [...new Set(points_byspid.points)];
+      const pts = uniquePts.length > MAX_PTS_PER_SPID
+        ? uniquePts.sort(() => Math.random() - 0.5).slice(0, MAX_PTS_PER_SPID)
+        : uniquePts;
 
       const query_points = pts
         .map((wkt) => `ST_SetSRID(ST_GeomFromText('${wkt}'), 4326)`)
