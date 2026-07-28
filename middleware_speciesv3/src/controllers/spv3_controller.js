@@ -318,15 +318,8 @@ exports.get_data_byid = async function (req, res) {
     // query keeps PostgreSQL on an index scan (~1.3 s).  Waves of 10 concurrent
     // batches prevent pool-connection timeouts (connectionTimeoutMillis = 5 s).
     //
-    // MAX_PTS_PER_SPID caps the occurrence points used in the mallas spatial-join
-    // query.  Common species (e.g. Odocoileus virginianus) can have 50 000+ records;
-    // embedding all of them as WKT literals creates a multi-MB SQL string that is
-    // slow to build, transmit, and parse.  1 000 points gives sufficient coverage
-    // of a species' range at all supported grid resolutions while keeping each
-    // spatial-join query ≤ 60 KB.
     const SPID_BATCH        = 10;
     const WAVE_SIZE         = 10;
-    const MAX_PTS_PER_SPID  = 1000;
 
     let queryPts = `
       SELECT DISTINCT
@@ -399,14 +392,7 @@ exports.get_data_byid = async function (req, res) {
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
-      // Deduplicate exact coordinates first — many SNIB records share identical
-      // WKT strings (museum specimens, rounded GPS).  Deduplication removes
-      // redundancy without geographic bias; truncation only kicks in when the
-      // unique-coordinate count still exceeds MAX_PTS_PER_SPID.
-      const uniquePts = [...new Set(points_byspid.points)];
-      const pts = uniquePts.length > MAX_PTS_PER_SPID
-        ? uniquePts.slice(0, MAX_PTS_PER_SPID)
-        : uniquePts;
+      const pts = [...new Set(points_byspid.points)];
 
       const query_points = pts
         .map((wkt) => `ST_SetSRID(ST_GeomFromText('${wkt}'), 4326)`)
