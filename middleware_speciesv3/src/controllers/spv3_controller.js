@@ -300,6 +300,34 @@ exports.get_data_byid = async function (req, res) {
       return res.status(500).json({ message: "Configuración taxonómica inválida para la variable solicitada" });
     }
 
+    const gridInfo = await pool_mallas.oneOrNone(
+      "SELECT resolution, table_cell_name FROM cat_grid WHERE grid_id = $1",
+      [grid_id]
+    );
+
+    if (!gridInfo) {
+      return res.status(404).json({ message: "No existe la malla solicitada (grid_id)" });
+    }
+
+    const res_column = "g.gridid_" + gridInfo.resolution;
+    const table_cell_name = gridInfo.table_cell_name;
+
+    // Per-species query: always returns one row per spid with its occurrence points.
+    // Large IN-lists (e.g. 2268 species in Mammalia) trigger a seq-scan on the
+    // 42M-row snib table and time out.  We avoid this by batching: 10 spids per
+    // query keeps PostgreSQL on an index scan (~1.3 s).  Waves of 10 concurrent
+    // batches prevent pool-connection timeouts (connectionTimeoutMillis = 5 s).
+    //
+    // MAX_PTS_PER_SPID caps the occurrence points used in the mallas spatial-join
+    // query.  Common species (e.g. Odocoileus virginianus) can have 50 000+ records;
+    // embedding all of them as WKT literals creates a multi-MB SQL string that is
+    // slow to build, transmit, and parse.  1 000 points gives sufficient coverage
+    // of a species' range at all supported grid resolutions while keeping each
+    // spatial-join query ≤ 60 KB.
+    const SPID_BATCH        = 10;
+    const WAVE_SIZE         = 10;
+    const MAX_PTS_PER_SPID  = 1000;
+
     let queryPts = `
       SELECT DISTINCT
         spid,
@@ -340,34 +368,42 @@ exports.get_data_byid = async function (req, res) {
       .replace("{in_fosil}", "")
       .replace("{in_sin_fecha}", "");
 
-    const datapoints = await pool.any(queryPts, {
-      spids: levels_id,
+    const snibParams = {
       dic_taxon_data: dic_taxon_data.get(column_taxon),
       dic_taxon_group: dic_taxon_group.get(column_taxon),
-    });
+    };
 
-    // Recomendado: 200 con arreglo vacío para búsquedas sin resultados
-    if (!datapoints || datapoints.length === 0) {
+    // Split spids into chunks and fetch per-species rows in waves
+    const spidChunks = [];
+    for (let i = 0; i < levels_id.length; i += SPID_BATCH) {
+      spidChunks.push(levels_id.slice(i, i + SPID_BATCH));
+    }
+
+    const datapoints = [];
+    for (let i = 0; i < spidChunks.length; i += WAVE_SIZE) {
+      const wave = spidChunks.slice(i, i + WAVE_SIZE);
+      const waveRows = await Promise.all(
+        wave.map(batch =>
+          pool.any(queryPts, { spids: batch, ...snibParams })
+            .catch(err => { debug('snib batch:', err.message); return []; })
+        )
+      );
+      datapoints.push(...waveRows.flat());
+    }
+
+    if (datapoints.length === 0) {
       return res.status(200).json([]);
     }
-
-    const gridInfo = await pool_mallas.oneOrNone(
-      "SELECT resolution, table_cell_name FROM cat_grid WHERE grid_id = $1",
-      [grid_id]
-    );
-
-    if (!gridInfo) {
-      return res.status(404).json({ message: "No existe la malla solicitada (grid_id)" });
-    }
-
-    const res_column = "g.gridid_" + gridInfo.resolution;
-    const table_cell_name = gridInfo.table_cell_name;
 
     const query_array = [];
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
-      const query_points = points_byspid.points
+      const pts = points_byspid.points.length > MAX_PTS_PER_SPID
+        ? points_byspid.points.slice(0, MAX_PTS_PER_SPID)
+        : points_byspid.points;
+
+      const query_points = pts
         .map((wkt) => `ST_SetSRID(ST_GeomFromText('${wkt}'), 4326)`)
         .join(", ");
 
@@ -397,14 +433,17 @@ exports.get_data_byid = async function (req, res) {
       });
     }
 
-    const results = await Promise.all(
-      query_array.map(({ query_temp }) =>
-        pool_mallas.any(query_temp, {}).catch((err) => {
-          debug(err);
-          return [];
-        })
-      )
-    );
+    const GRID_WAVE = 10;
+    const results = [];
+    for (let i = 0; i < query_array.length; i += GRID_WAVE) {
+      const wave = query_array.slice(i, i + GRID_WAVE);
+      const waveRows = await Promise.all(
+        wave.map(({ query_temp }) =>
+          pool_mallas.any(query_temp, {}).catch((err) => { debug(err); return []; })
+        )
+      );
+      results.push(...waveRows);
+    }
 
     const response_array = query_array.map((q, idx) => {
       const rows = results[idx] || [];
