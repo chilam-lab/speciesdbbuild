@@ -399,9 +399,14 @@ exports.get_data_byid = async function (req, res) {
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
-      const pts = points_byspid.points.length > MAX_PTS_PER_SPID
-        ? points_byspid.points.slice(0, MAX_PTS_PER_SPID)
-        : points_byspid.points;
+      // Deduplicate exact coordinates first — many SNIB records share identical
+      // WKT strings (museum specimens, rounded GPS).  Deduplication removes
+      // redundancy without geographic bias; truncation only kicks in when the
+      // unique-coordinate count still exceeds MAX_PTS_PER_SPID.
+      const uniquePts = [...new Set(points_byspid.points)];
+      const pts = uniquePts.length > MAX_PTS_PER_SPID
+        ? uniquePts.slice(0, MAX_PTS_PER_SPID)
+        : uniquePts;
 
       const query_points = pts
         .map((wkt) => `ST_SetSRID(ST_GeomFromText('${wkt}'), 4326)`)
