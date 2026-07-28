@@ -320,7 +320,7 @@ exports.get_data_byid = async function (req, res) {
     //
     const SPID_BATCH        = 10;
     const WAVE_SIZE         = 10;
-    const MAX_PTS_PER_SPID  = 5000;
+    const MAX_PTS_PER_SPID  = 10000;
 
     let queryPts = `
       SELECT DISTINCT
