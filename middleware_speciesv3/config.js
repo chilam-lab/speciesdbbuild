@@ -27,7 +27,13 @@ const config = {
     port: process.env.DBPORT_MALLAS,
     application_name: 'MallasV3_Middleware',
     ssl: false,
-    poolSize: 10,
+    // 25 (antes 10): el cruce punto->celda de get_data_byid resuelve una especie
+    // por conexión en oleadas de GRID_WAVE; con 10 una búsqueda por género con
+    // muchas especies (ej. "genero = Zea", 67 spids) tardaba ~60s en 7 oleadas
+    // secuenciales, rozando timeouts de proxy en producción. DB tiene
+    // max_connections=100 con margen real (~19 activas compartidas entre todos
+    // los middlewares al momento de este cambio).
+    poolSize: 25,
     connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 5000),
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
     query_timeout: Number(process.env.DB_MALLAS_QUERY_TIMEOUT_MS || 600000),
