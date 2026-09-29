@@ -312,6 +312,32 @@ exports.get_data_byid = async function (req, res) {
     const res_column = "g.gridid_" + gridInfo.resolution;
     const table_cell_name = gridInfo.table_cell_name;
 
+    // Cache bajo demanda: sp_snib.cells_<resolucion> lo llena el batch de
+    // dbbuild/sql/update_sp_snib_cells_batch.sql (precalculo de fondo), pero
+    // no hay que esperarlo -- si una especie ya se calculo (por el batch o
+    // por una consulta previa que la cacheo aqui mismo), se usa directo sin
+    // tocar snib/pool_mallas. Solo es seguro sin filtros activos: min_occ/
+    // in_fosil/in_sin_fecha cambian que ocurrencias cuentan, y el precalculo
+    // asume la vista sin filtrar.
+    const VALID_RESOLUTIONS = new Set(["64km", "32km", "16km", "8km", "ageb", "cue", "mun", "state"]);
+    const canUseCache = filter_names.length === 0 && VALID_RESOLUTIONS.has(gridInfo.resolution);
+    const cellsColumn = "cells_" + gridInfo.resolution;
+
+    let cachedRows = [];
+    let pendingLevelsId = levels_id;
+
+    if (canUseCache) {
+      cachedRows = await pool.any(
+        `SELECT spid, ${cellsColumn} AS cells, ('$<dic_taxon_data:raw>')::jsonb AS datos
+         FROM sp_snib
+         WHERE spid IN ($<spids:csv>) AND ${cellsColumn} IS NOT NULL`,
+        { spids: levels_id, dic_taxon_data: dic_taxon_data.get(column_taxon) }
+      ).catch((err) => { debug('cache lookup:', err.message); return []; });
+
+      const cachedSpids = new Set(cachedRows.map((r) => r.spid));
+      pendingLevelsId = levels_id.filter((id) => !cachedSpids.has(id));
+    }
+
     // Per-species query: always returns one row per spid with its occurrence points.
     // Large IN-lists (e.g. 2268 species in Mammalia) trigger a seq-scan on the
     // 42M-row snib table and time out.  We avoid this by batching: 10 spids per
@@ -369,8 +395,8 @@ exports.get_data_byid = async function (req, res) {
 
     // Split spids into chunks and fetch per-species rows in waves
     const spidChunks = [];
-    for (let i = 0; i < levels_id.length; i += SPID_BATCH) {
-      spidChunks.push(levels_id.slice(i, i + SPID_BATCH));
+    for (let i = 0; i < pendingLevelsId.length; i += SPID_BATCH) {
+      spidChunks.push(pendingLevelsId.slice(i, i + SPID_BATCH));
     }
 
     const datapoints = [];
@@ -385,11 +411,7 @@ exports.get_data_byid = async function (req, res) {
       datapoints.push(...waveRows.flat());
     }
 
-    if (datapoints.length === 0) {
-      return res.status(200).json([]);
-    }
-
-    const query_array = [];
+    const speciesPoints = [];
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
@@ -398,60 +420,103 @@ exports.get_data_byid = async function (req, res) {
         ? uniquePts.sort(() => Math.random() - 0.5).slice(0, MAX_PTS_PER_SPID)
         : uniquePts;
 
-      const query_points = pts
-        .map((wkt) => `ST_SetSRID(ST_GeomFromText('${wkt}'), 4326)`)
-        .join(", ");
-
-      let query_temp = `
-        WITH puntos AS (
-          SELECT ARRAY[{query_points}] AS geom_array
-        ),
-        point_geom AS (
-          SELECT unnest(geom_array) AS geom FROM puntos
-        )
-        SELECT DISTINCT {res_column} AS cell
-        FROM point_geom p
-        JOIN {table_cell_name} g
-          ON ST_Intersects(g.the_geom, p.geom)
-        ORDER BY cell;
-      `;
-
-      query_temp = query_temp
-        .replace("{query_points}", query_points)
-        .replace("{res_column}", res_column)
-        .replace("{table_cell_name}", table_cell_name);
-
-      query_array.push({
-        query_temp,
-        spid: points_byspid.spid,
-        datos: points_byspid.datos,
-      });
+      speciesPoints.push({ spid: points_byspid.spid, datos: points_byspid.datos, pts });
     }
+
+    // Agrupa varias especies por consulta para reducir el número de
+    // round-trips a la BD (antes: 1 query por especie, ~2268 para una clase
+    // como Mammalia). El límite es por TOTAL de puntos embebidos en la
+    // consulta, no por número de especies, para que una especie con muchos
+    // registros no genere un batch desproporcionadamente grande.
+    const MAX_PTS_PER_QUERY = 20000;
+
+    const speciesBatches = [];
+    let currentBatch = [];
+    let currentBatchPts = 0;
+    for (const sp of speciesPoints) {
+      if (currentBatch.length > 0 && currentBatchPts + sp.pts.length > MAX_PTS_PER_QUERY) {
+        speciesBatches.push(currentBatch);
+        currentBatch = [];
+        currentBatchPts = 0;
+      }
+      currentBatch.push(sp);
+      currentBatchPts += sp.pts.length;
+    }
+    if (currentBatch.length > 0) speciesBatches.push(currentBatch);
+
+    const buildBatchQuery = (batch) => {
+      const valuesRows = [];
+      for (const sp of batch) {
+        for (const wkt of sp.pts) {
+          valuesRows.push(`(${sp.spid}, ST_SetSRID(ST_GeomFromText('${wkt}'), 4326))`);
+        }
+      }
+      return `
+        WITH puntos(spid, geom) AS (
+          VALUES ${valuesRows.join(", ")}
+        )
+        SELECT DISTINCT spid, ${res_column} AS cell
+        FROM puntos p
+        JOIN ${table_cell_name} g
+          ON ST_Intersects(g.the_geom, p.geom)
+        ORDER BY spid, cell;
+      `;
+    };
 
     const GRID_WAVE = 25; // debe ser <= db_mallas.poolSize (config.js)
-    const results = [];
-    for (let i = 0; i < query_array.length; i += GRID_WAVE) {
-      const wave = query_array.slice(i, i + GRID_WAVE);
-      const waveRows = await Promise.all(
-        wave.map(({ query_temp }) =>
-          pool_mallas.any(query_temp, {}).catch((err) => { debug(err); return []; })
-        )
-      );
-      results.push(...waveRows);
+    const cellsBySpid = new Map();
+    if (speciesBatches.length > 0) {
+      for (let i = 0; i < speciesBatches.length; i += GRID_WAVE) {
+        const wave = speciesBatches.slice(i, i + GRID_WAVE);
+        const waveRows = await Promise.all(
+          wave.map((batch) =>
+            pool_mallas.any(buildBatchQuery(batch), {}).catch((err) => { debug(err); return []; })
+          )
+        );
+        for (const rows of waveRows) {
+          for (const { spid, cell } of rows) {
+            if (!cellsBySpid.has(spid)) cellsBySpid.set(spid, []);
+            cellsBySpid.get(spid).push(cell);
+          }
+        }
+      }
+
+      // Cache write-back: lo que se acaba de calcular en vivo se guarda en
+      // sp_snib para que la proxima consulta de esta misma especie/resolucion
+      // ya no necesite tocar snib/pool_mallas. No bloquea la respuesta al
+      // cliente (fire-and-forget) -- si falla, simplemente se vuelve a
+      // calcular en vivo la proxima vez, sin romper nada.
+      if (canUseCache && cellsBySpid.size > 0) {
+        const writes = [];
+        for (const [spid, cells] of cellsBySpid.entries()) {
+          writes.push(
+            pool.none(
+              `UPDATE sp_snib SET ${cellsColumn} = $<cells> WHERE spid = $<spid>`,
+              { cells, spid }
+            ).catch((err) => debug('cache write-back:', err.message))
+          );
+        }
+        Promise.all(writes).catch(() => {});
+      }
     }
 
-    const response_array = query_array.map((q, idx) => {
-      const rows = results[idx] || [];
-      const cells = rows.map((r) => r.cell);
-      return {
-        id: variable_id,
-        grid_id,
-        level_id: q.spid,
-        metadata: q.datos,
-        cells,
-        n: cells.length,
-      };
-    });
+    // Combina lo cacheado (sp_snib) con lo recien calculado en vivo,
+    // preservando el orden de entrada de levels_id.
+    const cachedBySpid = new Map(cachedRows.map((r) => [r.spid, r]));
+    const speciesPointsBySpid = new Map(speciesPoints.map((sp) => [sp.spid, sp]));
+
+    const response_array = [];
+    for (const spid of levels_id) {
+      if (cachedBySpid.has(spid)) {
+        const row = cachedBySpid.get(spid);
+        const cells = row.cells || [];
+        response_array.push({ id: variable_id, grid_id, level_id: spid, metadata: row.datos, cells, n: cells.length });
+      } else if (speciesPointsBySpid.has(spid)) {
+        const sp = speciesPointsBySpid.get(spid);
+        const cells = cellsBySpid.get(spid) || [];
+        response_array.push({ id: variable_id, grid_id, level_id: spid, metadata: sp.datos, cells, n: cells.length });
+      }
+    }
 
     return res.status(200).json(response_array);
   } catch (error) {
