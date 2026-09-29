@@ -31,7 +31,19 @@ LIMIT TO (
   grid_geojson_state_aoi,
   grid_geojson_mun_aoi,
   grid_geojson_ageb_aoi,
-  grid_geojson_cue_aoi
+  grid_geojson_cue_aoi,
+  -- Tablas finas de celda (no las vistas de region grid_geojson_*): se
+  -- necesitan para calcular presencia exacta por especie/celda en
+  -- update_sp_snib_cells_batch.sql, a diferencia de cat_taxon.available_grids
+  -- que solo necesita la cobertura burda por region.
+  grid_64km_aoi,
+  grid_32km_aoi,
+  grid_16km_aoi,
+  grid_8km_aoi,
+  grid_state_aoi,
+  grid_mun_aoi,
+  grid_ageb_aoi,
+  grid_cue_aoi
 )
 FROM SERVER mesh_server
 INTO mesh_fdw;

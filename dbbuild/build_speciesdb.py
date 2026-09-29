@@ -54,6 +54,9 @@ DBNICHEPASSWD=os.getenv("DBNICHEPASSWD")
 
 create_cat_taxon_table = './sql/create_cat_taxon.sql'
 create_mesh_fdw_sql = './sql/create_mesh_fdw.sql'
+add_sp_snib_cells_columns_sql = './sql/add_sp_snib_cells_columns.sql'
+sync_mesh_grids_local_sql = './sql/sync_mesh_grids_local.sql'
+update_sp_snib_cells_batch_sql = './sql/update_sp_snib_cells_batch.sql'
 
 DBMESHNAME = os.getenv("DBMESHNAME")
 DBMESHHOST = os.getenv("DBMESHHOST")
@@ -430,6 +433,36 @@ try:
     cur.execute(mesh_fdw_sql)
     flush_pg_notices(conn, 'FDW')
     logger.info('FDW configurado')
+
+    logger.info('Agregando columnas de celdas precalculadas en sp_snib')
+    cur.execute(get_sql(add_sp_snib_cells_columns_sql))
+    conn.commit()
+    logger.info('Columnas de celdas listas')
+
+    logger.info('Sincronizando copia local de tablas finas de malla (sync_mesh_grids_local.sql)')
+    cur.execute(get_sql(sync_mesh_grids_local_sql))
+    flush_pg_notices(conn, 'MESH_LOCAL')
+    conn.commit()
+    logger.info('Copia local de malla lista')
+
+    logger.info('Iniciando batch de celdas precalculadas por especie (sp_snib)')
+    cells_batch_sql = get_sql(update_sp_snib_cells_batch_sql)
+    batch_size_cells = int(os.getenv("CELLS_BATCH_SIZE", "200"))
+    cells_batch_no = 0
+
+    while True:
+        cells_batch_no += 1
+        cur.execute(cells_batch_sql, (batch_size_cells,))
+        cells_updated = cur.rowcount if cur.rowcount is not None else 0
+        conn.commit()
+
+        logger.info(f'Batch celdas {cells_batch_no}: especies_actualizadas={cells_updated}')
+
+        if cells_updated == 0:
+            logger.info('Sin especies dirty pendientes; finaliza precalculo de celdas.')
+            break
+
+    logger.info('Se recalcularon las celdas por especie correctamente')
 
     logger.info('Creando/actualizando tabla cat_taxon')
     create_cat_taxon_sql = get_sql(create_cat_taxon_table)
