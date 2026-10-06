@@ -56,7 +56,8 @@ create_cat_taxon_table = './sql/create_cat_taxon.sql'
 create_mesh_fdw_sql = './sql/create_mesh_fdw.sql'
 add_sp_snib_cells_columns_sql = './sql/add_sp_snib_cells_columns.sql'
 sync_mesh_grids_local_sql = './sql/sync_mesh_grids_local.sql'
-update_sp_snib_cells_batch_sql = './sql/update_sp_snib_cells_batch.sql'
+update_sp_snib_cells_regular_batch_sql = './sql/update_sp_snib_cells_regular_batch.sql'
+update_sp_snib_cells_irregular_batch_sql = './sql/update_sp_snib_cells_irregular_batch.sql'
 
 DBMESHNAME = os.getenv("DBMESHNAME")
 DBMESHHOST = os.getenv("DBMESHHOST")
@@ -445,22 +446,27 @@ try:
     conn.commit()
     logger.info('Copia local de malla lista')
 
-    logger.info('Iniciando batch de celdas precalculadas por especie (sp_snib)')
-    cells_batch_sql = get_sql(update_sp_snib_cells_batch_sql)
-    batch_size_cells = int(os.getenv("CELLS_BATCH_SIZE", "200"))
-    cells_batch_no = 0
+    # Dos fases: primero mallas regulares (64/32/16/8km) para todo el
+    # catalogo, despues las irregulares (ageb/cue/mun/state). La fase 2 es la
+    # que pone cells_dirty=false.
+    batch_size_cells = int(os.getenv("CELLS_BATCH_SIZE", "50"))
+    for fase, sql_path in (('regulares', update_sp_snib_cells_regular_batch_sql),
+                           ('irregulares', update_sp_snib_cells_irregular_batch_sql)):
+        logger.info(f'Iniciando batch de celdas precalculadas por especie (sp_snib), mallas {fase}')
+        cells_batch_sql = get_sql(sql_path)
+        cells_batch_no = 0
 
-    while True:
-        cells_batch_no += 1
-        cur.execute(cells_batch_sql, (batch_size_cells,))
-        cells_updated = cur.rowcount if cur.rowcount is not None else 0
-        conn.commit()
+        while True:
+            cells_batch_no += 1
+            cur.execute(cells_batch_sql, (batch_size_cells,))
+            cells_updated = cur.rowcount if cur.rowcount is not None else 0
+            conn.commit()
 
-        logger.info(f'Batch celdas {cells_batch_no}: especies_actualizadas={cells_updated}')
+            logger.info(f'Batch celdas {fase} {cells_batch_no}: especies_actualizadas={cells_updated}')
 
-        if cells_updated == 0:
-            logger.info('Sin especies dirty pendientes; finaliza precalculo de celdas.')
-            break
+            if cells_updated == 0:
+                logger.info(f'Sin especies pendientes de mallas {fase}.')
+                break
 
     logger.info('Se recalcularon las celdas por especie correctamente')
 

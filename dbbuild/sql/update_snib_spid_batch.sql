@@ -30,6 +30,9 @@ to_update AS (
 -- arreglos de celdas precalculados (cells_64km, etc.) quedan obsoletos,
 -- asi que update_sp_snib_cells_batch.sql la vuelve a tomar en su proximo
 -- batch. Reutiliza este mismo mecanismo incremental, no uno nuevo.
+-- Tambien se vacian los cells_* para que vuelva a pasar por la fase 1
+-- (mallas regulares, que filtra por cells_8km IS NULL) y para que el
+-- middleware no sirva el cache viejo mientras tanto.
 --
 -- Este UPDATE es un CTE de solo efecto secundario: no lo referencia el
 -- UPDATE final, pero Postgres lo ejecuta igual (a diferencia de un SELECT,
@@ -40,7 +43,9 @@ to_update AS (
 -- condicion de corte del loop de asignacion de spid.
 mark_dirty AS (
   UPDATE sp_snib
-  SET cells_dirty = true
+  SET cells_dirty = true,
+      cells_64km = NULL, cells_32km = NULL, cells_16km = NULL, cells_8km = NULL,
+      cells_ageb = NULL, cells_cue = NULL, cells_mun = NULL, cells_state = NULL
   WHERE spid IN (SELECT DISTINCT spid FROM to_update)
   RETURNING spid
 )
