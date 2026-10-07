@@ -334,6 +334,10 @@ exports.get_data_byid = async function (req, res) {
         { spids: levels_id, dic_taxon_data: dic_taxon_data.get(column_taxon) }
       ).catch((err) => { debug('cache lookup:', err.message); return []; });
 
+      // sp_snib.spid es bigint y pg lo entrega como string; levels_id son
+      // números, así que sin esto ningún spid coincide y todo se recalcula.
+      cachedRows.forEach((r) => { r.spid = Number(r.spid); });
+
       const cachedSpids = new Set(cachedRows.map((r) => r.spid));
       pendingLevelsId = levels_id.filter((id) => !cachedSpids.has(id));
     }
