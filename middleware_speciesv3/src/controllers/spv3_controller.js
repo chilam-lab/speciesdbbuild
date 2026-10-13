@@ -359,10 +359,16 @@ exports.get_data_byid = async function (req, res) {
       FROM snib s
       WHERE spid IN ($<spids:csv>)
         AND the_geom IS NOT NULL
-        {in_fosil} {in_sin_fecha}
+        {filters}
       GROUP BY spid, $<dic_taxon_group:raw>
       {min_occ}
     `;
+
+    // Año de colecta: aniocolecta (9999 = desconocido) o, si falta, el año al
+    // inicio de fechacolecta ('YYYY-MM-DD'). NULL = registro sin fecha.
+    const ANIO_SQL = `(CASE WHEN aniocolecta BETWEEN 1 AND 9998 THEN aniocolecta
+                            WHEN fechacolecta ~ '^[0-9]{4}' THEN substr(fechacolecta, 1, 4)::int END)`;
+    const conditions = [];
 
     for (let i = 0; i < filter_names.length; i++) {
       const filter_param = filter_names[i];
@@ -378,9 +384,19 @@ exports.get_data_byid = async function (req, res) {
           ` HAVING array_length(array_agg(st_astext(the_geom)),1) > ${Math.floor(min)} `
         );
       } else if (filter_param === "in_fosil") {
-        queryPts = queryPts.replace("{in_fosil}", filter_value ? " " : " AND ejemplarfosil = 'NO' ");
+        // ejemplarfosil solo trae 'SI' o NULL (no 'NO').
+        if (!filter_value) conditions.push("ejemplarfosil IS DISTINCT FROM 'SI'");
       } else if (filter_param === "in_sin_fecha") {
-        queryPts = queryPts.replace("{in_sin_fecha}", filter_value ? " " : " AND fechacolecta IS NOT NULL ");
+        if (!filter_value) conditions.push(`${ANIO_SQL} IS NOT NULL`);
+      } else if (filter_param === "fecha_inicio" || filter_param === "fecha_fin") {
+        // Rango de años; los registros sin fecha los decide in_sin_fecha.
+        if (filter_value === null || filter_value === undefined || filter_value === "") continue;
+        const year = Number(filter_value);
+        if (!Number.isInteger(year) || year < 0 || year > 9998) {
+          return res.status(400).json({ message: `${filter_param} debe ser un año válido` });
+        }
+        const op = filter_param === "fecha_inicio" ? ">=" : "<=";
+        conditions.push(`(${ANIO_SQL} IS NULL OR ${ANIO_SQL} ${op} ${year})`);
       } else {
         return res.status(400).json({ message: `Filtro no válido: ${filter_param}` });
       }
@@ -388,8 +404,7 @@ exports.get_data_byid = async function (req, res) {
 
     queryPts = queryPts
       .replace("{min_occ}", "")
-      .replace("{in_fosil}", "")
-      .replace("{in_sin_fecha}", "");
+      .replace("{filters}", conditions.map((c) => ` AND ${c}`).join(""));
 
     const snibParams = {
       dic_taxon_data: dic_taxon_data.get(column_taxon),
