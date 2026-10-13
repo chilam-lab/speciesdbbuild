@@ -265,6 +265,9 @@ exports.get_data_byid = async function (req, res) {
     const levels_id_raw = verb_utils.getParam(req, "levels_id", []);
     const filter_names = verb_utils.getParam(req, "filter_names", []);
     const filter_values = verb_utils.getParam(req, "filter_values", []);
+    // with_counts: agrega n_occ (registros con coordenadas que pasan los
+    // filtros) a cada especie; lo usa el resumen del mapa de Target.
+    const with_counts = verb_utils.getParam(req, "with_counts", false) === true;
 
     if (!Number.isInteger(variable_id) || variable_id <= 0) {
       return res.status(400).json({ message: "El parámetro id es inválido" });
@@ -554,6 +557,19 @@ exports.get_data_byid = async function (req, res) {
         const cells = cellsBySpid.get(spid) || [];
         response_array.push({ id: variable_id, grid_id, level_id: spid, metadata: sp.datos, cells, n: cells.length });
       }
+    }
+
+    if (with_counts && response_array.length > 0) {
+      const counts = await pool.any(
+        `SELECT spid, count(*)::int AS n_occ
+         FROM snib
+         WHERE spid IN ($<spids:csv>) AND the_geom IS NOT NULL
+         ${conditions.map((c) => ` AND ${c}`).join("")}
+         GROUP BY spid`,
+        { spids: response_array.map((r) => r.level_id) }
+      ).catch((err) => { debug('counts:', err.message); return []; });
+      const nBySpid = new Map(counts.map((r) => [Number(r.spid), r.n_occ]));
+      response_array.forEach((r) => { r.n_occ = nBySpid.get(Number(r.level_id)) ?? 0; });
     }
 
     return res.status(200).json(response_array);
