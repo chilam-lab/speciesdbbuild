@@ -258,6 +258,108 @@ exports.get_variable_byid = async function (req, res) {
 
 
 
+// Año de colecta: aniocolecta (9999 = desconocido) o, si falta, el año al
+// inicio de fechacolecta ('YYYY-MM-DD'). NULL = registro sin fecha.
+const SNIB_ANIO_SQL = `(CASE WHEN aniocolecta BETWEEN 1 AND 9998 THEN aniocolecta
+                             WHEN fechacolecta ~ '^[0-9]{4}' THEN substr(fechacolecta, 1, 4)::int END)`;
+
+/**
+ * filter_names/filter_values -> condiciones SQL sobre snib (sin el AND).
+ * Devuelve { conditions, minOcc, error }; minOcc es null si no se pidió.
+ */
+function snibFilterConditions(filter_names, filter_values) {
+  const conditions = [];
+  let minOcc = null;
+  for (let i = 0; i < filter_names.length; i++) {
+    const filter_param = filter_names[i];
+    const filter_value = filter_values[i];
+
+    if (filter_param === "min_occ") {
+      const min = Number(filter_value);
+      if (!Number.isFinite(min) || min < 0) return { error: "min_occ debe ser un número >= 0" };
+      minOcc = Math.floor(min);
+    } else if (filter_param === "in_fosil") {
+      // ejemplarfosil solo trae 'SI' o NULL (no 'NO').
+      if (!filter_value) conditions.push("ejemplarfosil IS DISTINCT FROM 'SI'");
+    } else if (filter_param === "in_sin_fecha") {
+      if (!filter_value) conditions.push(`${SNIB_ANIO_SQL} IS NOT NULL`);
+    } else if (filter_param === "fecha_inicio" || filter_param === "fecha_fin") {
+      // Rango de años; los registros sin fecha los decide in_sin_fecha.
+      if (filter_value === null || filter_value === undefined || filter_value === "") continue;
+      const year = Number(filter_value);
+      if (!Number.isInteger(year) || year < 0 || year > 9998) return { error: `${filter_param} debe ser un año válido` };
+      const op = filter_param === "fecha_inicio" ? ">=" : "<=";
+      conditions.push(`(${SNIB_ANIO_SQL} IS NULL OR ${SNIB_ANIO_SQL} ${op} ${year})`);
+    } else {
+      return { error: `Filtro no válido: ${filter_param}` };
+    }
+  }
+  return { conditions, minOcc, error: null };
+}
+
+/**
+ * Registros del target dentro de una celda (popup del mapa de Target):
+ * nombre, año y liga a la ficha del ejemplar. Mismos filtros que get-data.
+ * Body: { grid_id, cell_id, levels_id, filter_names, filter_values, limit }
+ */
+exports.get_cell_occ = async function (req, res) {
+  try {
+    const grid_id = Number(verb_utils.getParam(req, "grid_id", 0));
+    const cell_id = Number(verb_utils.getParam(req, "cell_id", NaN));
+    const levels_id_raw = verb_utils.getParam(req, "levels_id", []);
+    const filter_names = verb_utils.getParam(req, "filter_names", []);
+    const filter_values = verb_utils.getParam(req, "filter_values", []);
+    const limit = Math.min(Math.max(Number(verb_utils.getParam(req, "limit", 500)) || 500, 1), 2000);
+
+    const levels_id = Array.isArray(levels_id_raw)
+      ? levels_id_raw.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+      : [];
+    if (!Number.isInteger(grid_id) || grid_id <= 0 || !Number.isFinite(cell_id) || levels_id.length === 0) {
+      return res.status(400).json({ message: "Se requieren grid_id, cell_id y levels_id" });
+    }
+    if (!Array.isArray(filter_names) || !Array.isArray(filter_values) || filter_names.length !== filter_values.length) {
+      return res.status(400).json({ message: "filter_names y filter_values deben ser arreglos del mismo tamaño" });
+    }
+    const parsed = snibFilterConditions(filter_names, filter_values);
+    if (parsed.error) return res.status(400).json({ message: parsed.error });
+
+    const gridInfo = await pool_mallas.oneOrNone(
+      "SELECT resolution, table_cell_name FROM cat_grid WHERE grid_id = $1", [grid_id]
+    );
+    if (!gridInfo) return res.status(404).json({ message: "No existe la malla solicitada (grid_id)" });
+
+    const cell = await pool_mallas.oneOrNone(
+      `SELECT ST_AsEWKB(the_geom) AS geom FROM ${gridInfo.table_cell_name} WHERE gridid_${gridInfo.resolution} = $1`,
+      [cell_id]
+    );
+    if (!cell) return res.status(404).json({ message: "No existe la celda en la malla" });
+
+    const rows = await pool.any(
+      `SELECT especievalidabusqueda AS nombre,
+              ${SNIB_ANIO_SQL} AS anio,
+              fechacolecta AS fecha,
+              urlejemplar AS url
+       FROM snib
+       WHERE spid IN ($<spids:csv>)
+         AND the_geom IS NOT NULL
+         AND ST_Intersects(the_geom, ST_GeomFromEWKB($<geom>))
+         ${parsed.conditions.map((c) => ` AND ${c}`).join("")}
+       ORDER BY nombre, anio DESC NULLS LAST
+       LIMIT $<limit>`,
+      { spids: levels_id, geom: cell.geom, limit: limit + 1 }
+    );
+
+    return res.status(200).json({
+      cell_id,
+      truncated: rows.length > limit,
+      data: rows.slice(0, limit),
+    });
+  } catch (error) {
+    debug(error);
+    return res.status(500).json({ message: "Error interno al obtener los registros de la celda" });
+  }
+};
+
 exports.get_data_byid = async function (req, res) {
   try {
     const variable_id = Number(req.params.id);
@@ -367,42 +469,16 @@ exports.get_data_byid = async function (req, res) {
       {min_occ}
     `;
 
-    // Año de colecta: aniocolecta (9999 = desconocido) o, si falta, el año al
-    // inicio de fechacolecta ('YYYY-MM-DD'). NULL = registro sin fecha.
-    const ANIO_SQL = `(CASE WHEN aniocolecta BETWEEN 1 AND 9998 THEN aniocolecta
-                            WHEN fechacolecta ~ '^[0-9]{4}' THEN substr(fechacolecta, 1, 4)::int END)`;
-    const conditions = [];
-
-    for (let i = 0; i < filter_names.length; i++) {
-      const filter_param = filter_names[i];
-      const filter_value = filter_values[i];
-
-      if (filter_param === "min_occ") {
-        const min = Number(filter_value);
-        if (!Number.isFinite(min) || min < 0) {
-          return res.status(400).json({ message: "min_occ debe ser un número >= 0" });
-        }
-        queryPts = queryPts.replace(
-          "{min_occ}",
-          ` HAVING array_length(array_agg(st_astext(the_geom)),1) > ${Math.floor(min)} `
-        );
-      } else if (filter_param === "in_fosil") {
-        // ejemplarfosil solo trae 'SI' o NULL (no 'NO').
-        if (!filter_value) conditions.push("ejemplarfosil IS DISTINCT FROM 'SI'");
-      } else if (filter_param === "in_sin_fecha") {
-        if (!filter_value) conditions.push(`${ANIO_SQL} IS NOT NULL`);
-      } else if (filter_param === "fecha_inicio" || filter_param === "fecha_fin") {
-        // Rango de años; los registros sin fecha los decide in_sin_fecha.
-        if (filter_value === null || filter_value === undefined || filter_value === "") continue;
-        const year = Number(filter_value);
-        if (!Number.isInteger(year) || year < 0 || year > 9998) {
-          return res.status(400).json({ message: `${filter_param} debe ser un año válido` });
-        }
-        const op = filter_param === "fecha_inicio" ? ">=" : "<=";
-        conditions.push(`(${ANIO_SQL} IS NULL OR ${ANIO_SQL} ${op} ${year})`);
-      } else {
-        return res.status(400).json({ message: `Filtro no válido: ${filter_param}` });
-      }
+    const parsed = snibFilterConditions(filter_names, filter_values);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+    const conditions = parsed.conditions;
+    if (parsed.minOcc !== null) {
+      queryPts = queryPts.replace(
+        "{min_occ}",
+        ` HAVING array_length(array_agg(st_astext(the_geom)),1) > ${parsed.minOcc} `
+      );
     }
 
     queryPts = queryPts
