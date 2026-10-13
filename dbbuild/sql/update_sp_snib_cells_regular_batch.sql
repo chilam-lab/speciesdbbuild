@@ -5,8 +5,9 @@
 -- middleware (get_data_byid) usa cada columna cells_<res> en cuanto deja de
 -- ser NULL, sin mirar cells_dirty.
 --
--- Toma especies cells_dirty con cells_8km IS NULL (pendientes de fase 1) y
--- deja cells_dirty=true para que la fase 2 las recoja.
+-- Toma especies cells_dirty con CUALQUIER regular en NULL (pendientes de fase
+-- 1; no solo cells_8km, porque el write-back del middleware puede llenar una
+-- columna suelta) y deja cells_dirty=true para que la fase 2 las recoja.
 --
 -- Plan: batch y pts van MATERIALIZED y cada malla se une contra pts (los
 -- puntos del lote, leidos de snib una sola vez). Sin esto el planner llegaba
@@ -20,7 +21,7 @@
 WITH batch AS MATERIALIZED (
   SELECT spid
   FROM sp_snib
-  WHERE cells_dirty = true AND cells_8km IS NULL
+  WHERE cells_dirty = true AND (cells_64km IS NULL OR cells_32km IS NULL OR cells_16km IS NULL OR cells_8km IS NULL)
   ORDER BY spid
   LIMIT %s
   FOR UPDATE SKIP LOCKED

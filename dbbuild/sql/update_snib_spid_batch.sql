@@ -31,7 +31,7 @@ to_update AS (
 -- asi que update_sp_snib_cells_batch.sql la vuelve a tomar en su proximo
 -- batch. Reutiliza este mismo mecanismo incremental, no uno nuevo.
 -- Tambien se vacian los cells_* para que vuelva a pasar por la fase 1
--- (mallas regulares, que filtra por cells_8km IS NULL) y para que el
+-- (mallas regulares, que toma las que tengan alguna regular en NULL) y para que el
 -- middleware no sirva el cache viejo mientras tanto.
 --
 -- Este UPDATE es un CTE de solo efecto secundario: no lo referencia el

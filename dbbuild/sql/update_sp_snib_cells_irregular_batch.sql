@@ -2,14 +2,14 @@
 -- (ageb/cue/mun/state). Corre despues de update_sp_snib_cells_regular_batch.sql
 -- (fase 1, mallas regulares) y es la que cierra cells_dirty=false.
 --
--- Toma especies cells_dirty con cells_8km IS NOT NULL (fase 1 ya hecha).
+-- Toma especies cells_dirty con las 4 regulares calculadas (fase 1 ya hecha).
 -- Mismo patron de plan que la fase 1 (batch/pts MATERIALIZED): ver el
 -- comentario ahi sobre el join invertido contra el GiST de snib.
 
 WITH batch AS MATERIALIZED (
   SELECT spid
   FROM sp_snib
-  WHERE cells_dirty = true AND cells_8km IS NOT NULL
+  WHERE cells_dirty = true AND cells_64km IS NOT NULL AND cells_32km IS NOT NULL AND cells_16km IS NOT NULL AND cells_8km IS NOT NULL
   ORDER BY spid
   LIMIT %s
   FOR UPDATE SKIP LOCKED

@@ -448,25 +448,59 @@ try:
 
     # Dos fases: primero mallas regulares (64/32/16/8km) para todo el
     # catalogo, despues las irregulares (ageb/cue/mun/state). La fase 2 es la
-    # que pone cells_dirty=false.
+    # que pone cells_dirty=false. Solo se toman especies cells_dirty, asi que en
+    # una actualizacion incremental solo se recalculan las que recibieron
+    # ocurrencias nuevas (update_snib_spid_batch.sql las marca).
+    #
+    # CELLS_WORKERS hilos en paralelo, cada uno con su conexion (los batch
+    # usan FOR UPDATE SKIP LOCKED). Hilos y no procesos: este script corre todo
+    # a nivel de modulo y un proceso hijo lo volveria a ejecutar completo; los
+    # hilos bastan porque psycopg2 suelta el GIL mientras espera a Postgres.
     batch_size_cells = int(os.getenv("CELLS_BATCH_SIZE", "50"))
+    cells_workers = int(os.getenv("CELLS_WORKERS", "4"))
+    pending_regular_sql = """SELECT count(*) FROM sp_snib WHERE cells_dirty AND
+        (cells_64km IS NULL OR cells_32km IS NULL OR cells_16km IS NULL OR cells_8km IS NULL)"""
+
+    def cells_worker(wid, fase, sql_path):
+        wconn = psycopg2.connect(
+            'dbname={0} host={1} port={2} user={3} password={4}'.format(
+                DBNICHENAME, DBNICHEHOST, DBNICHEPORT, DBNICHEUSER, DBNICHEPASSWD
+            )
+        )
+        wconn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        wcur = wconn.cursor()
+        cells_batch_sql = get_sql(sql_path)
+        cells_batch_no = total = 0
+        try:
+            while True:
+                cells_batch_no += 1
+                t0 = time.time()
+                wcur.execute(cells_batch_sql, (batch_size_cells,))
+                cells_updated = wcur.rowcount if wcur.rowcount is not None else 0
+                total += cells_updated
+                logger.info(f'[w{wid}] Batch celdas {fase} {cells_batch_no}: '
+                            f'especies_actualizadas={cells_updated} tiempo={time.time() - t0:.1f}s acumulado={total}')
+                if cells_updated == 0:
+                    return total
+        finally:
+            wcur.close()
+            wconn.close()
+
+    from concurrent.futures import ThreadPoolExecutor
     for fase, sql_path in (('regulares', update_sp_snib_cells_regular_batch_sql),
                            ('irregulares', update_sp_snib_cells_irregular_batch_sql)):
-        logger.info(f'Iniciando batch de celdas precalculadas por especie (sp_snib), mallas {fase}')
-        cells_batch_sql = get_sql(sql_path)
-        cells_batch_no = 0
+        logger.info(f'Iniciando batch de celdas precalculadas por especie (sp_snib), mallas {fase}, '
+                    f'workers={cells_workers} batch_size={batch_size_cells}')
+        with ThreadPoolExecutor(max_workers=cells_workers) as pool:
+            totals = list(pool.map(lambda w: cells_worker(w, fase, sql_path), range(1, cells_workers + 1)))
+        logger.info(f'Sin especies pendientes de mallas {fase}: {sum(totals)} especies calculadas.')
 
-        while True:
-            cells_batch_no += 1
-            cur.execute(cells_batch_sql, (batch_size_cells,))
-            cells_updated = cur.rowcount if cur.rowcount is not None else 0
-            conn.commit()
-
-            logger.info(f'Batch celdas {fase} {cells_batch_no}: especies_actualizadas={cells_updated}')
-
-            if cells_updated == 0:
-                logger.info(f'Sin especies pendientes de mallas {fase}.')
-                break
+    cur.execute(pending_regular_sql)
+    pendientes_reg = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM sp_snib WHERE cells_dirty")
+    pendientes = cur.fetchone()[0]
+    if pendientes:
+        logger.warning(f'Quedaron {pendientes} especies cells_dirty ({pendientes_reg} sin regulares completas)')
 
     logger.info('Se recalcularon las celdas por especie correctamente')
 
