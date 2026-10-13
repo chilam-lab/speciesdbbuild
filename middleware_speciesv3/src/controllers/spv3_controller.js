@@ -337,7 +337,10 @@ exports.get_cell_occ = async function (req, res) {
     const rows = await pool.any(
       `SELECT especievalidabusqueda AS nombre,
               ${SNIB_ANIO_SQL} AS anio,
-              fechacolecta AS fecha,
+              NULLIF(fechacolecta, '') AS fecha,
+              NULLIF(fuente, '') AS fuente,
+              NULLIF(coleccion, '') AS coleccion,
+              NULLIF(procedenciaejemplar, '') AS tipo,
               urlejemplar AS url
        FROM snib
        WHERE spid IN ($<spids:csv>)
