@@ -350,7 +350,6 @@ exports.get_data_byid = async function (req, res) {
     //
     const SPID_BATCH        = 10;
     const WAVE_SIZE         = 10;
-    const MAX_PTS_PER_SPID  = 10000;
 
     let queryPts = `
       SELECT DISTINCT
@@ -419,11 +418,9 @@ exports.get_data_byid = async function (req, res) {
     for (const points_byspid of datapoints) {
       if (!points_byspid.points || points_byspid.points.length === 0) continue;
 
-      const uniquePts = [...new Set(points_byspid.points)];
-      const pts = uniquePts.length > MAX_PTS_PER_SPID
-        ? uniquePts.sort(() => Math.random() - 0.5).slice(0, MAX_PTS_PER_SPID)
-        : uniquePts;
-
+      // Todos los puntos únicos, sin muestreo: el resultado debe coincidir
+      // con el precálculo (sp_snib.cells_*) porque se guarda en el cache.
+      const pts = [...new Set(points_byspid.points)];
       speciesPoints.push({ spid: points_byspid.spid, datos: points_byspid.datos, pts });
     }
 
@@ -431,13 +428,22 @@ exports.get_data_byid = async function (req, res) {
     // round-trips a la BD (antes: 1 query por especie, ~2268 para una clase
     // como Mammalia). El límite es por TOTAL de puntos embebidos en la
     // consulta, no por número de especies, para que una especie con muchos
-    // registros no genere un batch desproporcionadamente grande.
+    // registros no genere un batch desproporcionadamente grande. Una especie
+    // con más de MAX_PTS_PER_QUERY puntos se parte en varios trozos (cada uno
+    // en su propio batch) y sus celdas se unen al final.
     const MAX_PTS_PER_QUERY = 20000;
+
+    const speciesChunks = [];
+    for (const sp of speciesPoints) {
+      for (let i = 0; i < sp.pts.length; i += MAX_PTS_PER_QUERY) {
+        speciesChunks.push({ spid: sp.spid, pts: sp.pts.slice(i, i + MAX_PTS_PER_QUERY) });
+      }
+    }
 
     const speciesBatches = [];
     let currentBatch = [];
     let currentBatchPts = 0;
-    for (const sp of speciesPoints) {
+    for (const sp of speciesChunks) {
       if (currentBatch.length > 0 && currentBatchPts + sp.pts.length > MAX_PTS_PER_QUERY) {
         speciesBatches.push(currentBatch);
         currentBatch = [];
@@ -468,31 +474,44 @@ exports.get_data_byid = async function (req, res) {
     };
 
     const GRID_WAVE = 25; // debe ser <= db_mallas.poolSize (config.js)
-    const cellsBySpid = new Map();
+    const cellsBySpid = new Map();   // spid -> Set de celdas
+    const failedSpids = new Set();   // algún trozo falló: resultado incompleto
     if (speciesBatches.length > 0) {
       for (let i = 0; i < speciesBatches.length; i += GRID_WAVE) {
         const wave = speciesBatches.slice(i, i + GRID_WAVE);
         const waveRows = await Promise.all(
           wave.map((batch) =>
-            pool_mallas.any(buildBatchQuery(batch), {}).catch((err) => { debug(err); return []; })
+            pool_mallas.any(buildBatchQuery(batch), {}).catch((err) => {
+              debug(err);
+              batch.forEach((sp) => failedSpids.add(sp.spid));
+              return [];
+            })
           )
         );
         for (const rows of waveRows) {
           for (const { spid, cell } of rows) {
-            if (!cellsBySpid.has(spid)) cellsBySpid.set(spid, []);
-            cellsBySpid.get(spid).push(cell);
+            if (!cellsBySpid.has(spid)) cellsBySpid.set(spid, new Set());
+            cellsBySpid.get(spid).add(cell);
           }
         }
+      }
+
+      // Set -> arreglo ordenado (los trozos de una misma especie pueden
+      // repetir celdas y llegar en cualquier orden).
+      for (const [spid, cells] of cellsBySpid.entries()) {
+        cellsBySpid.set(spid, [...cells].sort((x, y) => x - y));
       }
 
       // Cache write-back: lo que se acaba de calcular en vivo se guarda en
       // sp_snib para que la proxima consulta de esta misma especie/resolucion
       // ya no necesite tocar snib/pool_mallas. No bloquea la respuesta al
       // cliente (fire-and-forget) -- si falla, simplemente se vuelve a
-      // calcular en vivo la proxima vez, sin romper nada.
+      // calcular en vivo la proxima vez, sin romper nada. Solo especies cuyos
+      // trozos terminaron todos: un resultado incompleto no debe quedar en cache.
       if (canUseCache && cellsBySpid.size > 0) {
         const writes = [];
         for (const [spid, cells] of cellsBySpid.entries()) {
+          if (failedSpids.has(spid)) continue;
           writes.push(
             pool.none(
               `UPDATE sp_snib SET ${cellsColumn} = $<cells> WHERE spid = $<spid>`,
