@@ -157,6 +157,7 @@ exports.get_variable_byid = async function (req, res) {
 
     const query_array = [];
     const filter_separator = ";";
+    const match = verb_utils.getParam(req, "match", "exact");
     const pair_separator = "=";
     const group_separator = ",";
 
@@ -194,8 +195,9 @@ exports.get_variable_byid = async function (req, res) {
           } else {
             const safeValue = String(value).replace(/'/g, "''");
 
-            if (filter_param === "especie") {
-              // exacto para no incluir subespecies
+            if (filter_param === "especie" && match !== "prefix") {
+              // exacto para no incluir subespecies (análisis); el autocompletado
+              // del selector manda match = 'prefix' para buscar por inicio.
               query_temp += `${op}lower(${col}) = lower('${safeValue}') `;
             } else {
               // mantiene comportamiento actual por prefijo para otros taxones
