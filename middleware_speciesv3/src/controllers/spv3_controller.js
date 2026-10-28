@@ -396,29 +396,47 @@ exports.get_occ = async function (req, res) {
     );
     if (!gridInfo) return res.status(404).json({ message: "No existe la malla solicitada (grid_id)" });
 
-    // Por lotes de especies, como get-data (listas IN grandes hacen seq-scan).
+    // Lotes de 10 especies en oleadas de 10 consultas, como get-data (listas
+    // IN grandes hacen seq-scan sobre la tabla de registros). Un lote con
+    // registros fuera de caché puede tardar decenas de segundos (taxones
+    // grandes como Mammalia suman minutos), así que hay presupuesto de
+    // tiempo: al agotarse, o si un lote falla, se responde con lo obtenido y
+    // truncated = true.
     const SPID_BATCH = 10;
+    const WAVE_SIZE = 10;
+    const TIME_BUDGET_MS = 40000;
+    const t0 = Date.now();
+    const chunks = [];
+    for (let i = 0; i < levels_id.length; i += SPID_BATCH) chunks.push(levels_id.slice(i, i + SPID_BATCH));
     const rows = [];
     let truncated = false;
-    for (let i = 0; i < levels_id.length && !truncated; i += SPID_BATCH) {
-      const batch = await pool.any(
+    for (let w = 0; w < chunks.length && !truncated; w += WAVE_SIZE) {
+      const msLeft = TIME_BUDGET_MS - (Date.now() - t0);
+      if (msLeft < 1000) { truncated = true; break; }
+      const remaining = limit - rows.length + 1;
+      // SET LOCAL: la BD cancela el lote al agotarse el presupuesto (el
+      // timeout del pool es de 60 s y solo aplica a esta transacción).
+      const wave = await Promise.all(chunks.slice(w, w + WAVE_SIZE).map((chunk) => pool.tx((t) => t.none(
+        `SET LOCAL statement_timeout = ${Math.floor(msLeft)}`
+      ).then(() => t.any(
         `SELECT especievalidabusqueda AS nombre,
-                ${SNIB_ANIO_SQL} AS anio,
-                NULLIF(fechacolecta, '') AS fecha,
-                NULLIF(fuente, '') AS fuente,
-                NULLIF(coleccion, '') AS coleccion,
-                NULLIF(procedenciaejemplar, '') AS tipo,
-                (ejemplarfosil = 'SI') AS fosil,
-                urlejemplar AS url,
-                ST_X(the_geom) AS longitud,
-                ST_Y(the_geom) AS latitud
-         FROM snib
-         WHERE spid IN ($<spids:csv>)
-           AND the_geom IS NOT NULL
-           ${parsed.conditions.map((c) => ` AND ${c}`).join("")}`,
-        { spids: levels_id.slice(i, i + SPID_BATCH) }
-      );
-      for (const r of batch) {
+                  ${SNIB_ANIO_SQL} AS anio,
+                  NULLIF(fechacolecta, '') AS fecha,
+                  NULLIF(fuente, '') AS fuente,
+                  NULLIF(coleccion, '') AS coleccion,
+                  NULLIF(procedenciaejemplar, '') AS tipo,
+                  COALESCE(ejemplarfosil = 'SI', false) AS fosil,
+                  urlejemplar AS url,
+                  ST_X(the_geom) AS longitud,
+                  ST_Y(the_geom) AS latitud
+           FROM snib
+           WHERE spid IN ($<spids:csv>)
+             AND the_geom IS NOT NULL
+             ${parsed.conditions.map((c) => ` AND ${c}`).join("")}
+           LIMIT $<remaining>`,
+          { spids: chunk, remaining }
+      ))).catch((err) => { debug('get_occ lote:', err.message); truncated = true; return []; })));
+      for (const r of wave.flat()) {
         if (rows.length >= limit) { truncated = true; break; }
         rows.push(r);
       }
