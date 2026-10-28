@@ -57,6 +57,9 @@ router.route('/get-data/:id')
 router.route('/get-cell-occ')
   .post(regionCtrl.get_cell_occ)
 
+router.route('/get-occ')
+  .post(regionCtrl.get_occ)
+
 router.route('/info')
   .get(regionCtrl.get_sourceinfo)
   .post(regionCtrl.get_sourceinfo)
